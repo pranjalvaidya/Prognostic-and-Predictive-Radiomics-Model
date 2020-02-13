@@ -1,0 +1,90 @@
+---
+title: "Prognostic Performance"
+author: "Pranjal"
+date: "2/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Initial Setup and Package Loads in R 
+
+Packages used for the analysis.
+```{r initial_setup, cache=FALSE, message = FALSE, warning = FALSE}
+library(glmnet);library(survival);library(survminer);library(readxl);library(ggplot2); library(GGally)
+library(knitr); library(rmdformats); library(magrittr)
+library(skimr); library(Hmisc); library(Epi); library(vcd)
+library(tidyverse) 
+
+source("Love-boost.R")
+
+## Global options
+
+options(max.print="75")
+opts_chunk$set(comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+
+
+skimr::skim_with(numeric = list(hist = NULL),
+                 integer = list(hist = NULL))
+```
+
+## Loading the Raw Data into R 
+
+Loading raw dataset into R.
+
+Training Data from CCF with minimum and max. survival time.
+```{r}
+train <- read.csv("dataset_train.csv")
+train$censor <- ifelse(train$status == 1,'Censor','Dead')
+```
+
+```{r}
+ggbarplot(train, x = "Cases", y = "RRS",
+          fill = "censor",               # change fill color by cyl
+          color = FALSE,            # Set bar border colors to white
+          palette = "jco",            # jco journal color palett.
+          sort.val = "desc",          # Sort the value in dscending order
+          sort.by.groups = FALSE,     # Don't sort inside each group
+     #     x.text.angle = 90           # Rotate vertically x axis texts
+          )
+```
+
+# TCGA DATASET
+```{r train_set}
+TCGA <- read.csv("dataset_nsclc.csv")
+TCGA$censor <- ifelse(TCGA$status == 1,'Censor','Dead')
+```
+
+```{r}
+ggbarplot(TCGA, x = "Cases", y = "RRS",
+          fill = "censor",               # change fill color by cyl
+          color = FALSE,            # Set bar border colors to white
+          palette = "jco",            # jco journal color palett.
+          sort.val = "desc",          # Sort the value in dscending order
+          sort.by.groups = FALSE,     # Don't sort inside each group
+     #     x.text.angle = 90           # Rotate vertically x axis texts
+          )
+```
+
+
+# UPENN DATASET
+```{r }
+UPENN <- read.csv("dataset_upenn.csv")
+UPENN$censor <- ifelse(UPENN$status == 1,'Censor','Dead')
+```
+
+
+```{r}
+ggbarplot(UPENN, x = "Cases", y = "RRS",
+          fill = "censor",               # change fill color by cyl
+          color = FALSE,            # Set bar border colors to white
+          palette = "jco",            # jco journal color palett.
+          sort.val = "desc",          # Sort the value in dscending order
+          sort.by.groups = FALSE,     # Don't sort inside each group
+     #     x.text.angle = 90           # Rotate vertically x axis texts
+          )
+```

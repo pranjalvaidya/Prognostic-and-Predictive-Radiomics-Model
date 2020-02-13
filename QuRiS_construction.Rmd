@@ -1,0 +1,314 @@
+---
+title: "Prognostic Predictive Signature"
+author: "Pranjal Vaidya"
+date: "`r Sys.Date()`"
+linkcolor: blue
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    number_sections: true
+    code_folding: show
+---
+
+# Introduction 
+
+Generating Radiomic Signature based on the LASSO GLMNET model for predicting Disease-Free Survival in Early-Stage NSCLC. 
+
+# Data Load/Merge
+
+Initial Setup and Package Loads in R 
+
+Packages used for the analysis.
+```{r initial_setup, cache=FALSE, message = FALSE, warning = FALSE}
+library(glmnet);library(survival);library(survminer);library(readxl);library(ggplot2); library(GGally);library(knitr); library(rmdformats); library(magrittr);
+library(skimr); library(Hmisc); library(Epi); library(vcd); library(tidyverse) 
+
+## Global options
+
+options(max.print="75")
+opts_chunk$set(comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+
+
+skimr::skim_with(numeric = list(hist = NULL),
+                 integer = list(hist = NULL))
+```
+
+## Loading the Raw Data into R 
+
+Loading raw dataset into R.
+
+```{r load_train_set}
+train <- read.csv("sample.csv")
+train %>%
+  select(time) %>%
+  summary()
+```
+
+## Feature Selection 
+
+LASSO Feature Selection Method.
+alpha=0 gives ridge regression and alpha =1 is LASSO regression.
+
+input to the cross validation LASSO model
+x1: Feature Matrix (Rows: patients and col: features)
+y1: time (months/days/years), status_vector(1:censor, 2:dead)
+
+output: 
+10 fold cross-validation LASSO plot 
+```{r Feature Selection}
+x1 <- train[,(8:length(train))]
+x <- data.matrix(x1, rownames.force = NA)
+y1 <- train[,(2:3)]
+y <- data.matrix(y1, rownames.force = NA)
+
+
+library(survival)
+cvfit = cv.glmnet(x, y,family = 'cox',alpha=0.1)
+plot(cvfit)
+```
+
+Seelcting top features.
+output:
+coeffs_arranges: matrix of name of features and corresponding coefficients
+names: top feature names
+my_coefficients: coefficients of top features
+
+```{r top_features}
+tmp_coeffs <- coef(cvfit, s = "lambda.min")
+non_zero_coefs <- data.frame(name = tmp_coeffs@Dimnames[[1]][tmp_coeffs@i + 1], coefficient = (tmp_coeffs@x))
+coeffs_arranges <- non_zero_coefs[order(-non_zero_coefs$coefficient),]
+names <- coeffs_arranges[,1]
+my_coefficients <- (coeffs_arranges[,2])
+my_coefficients
+```
+
+
+# Contruction of QuRiS
+
+Multivariate Analysis with LASSO top features on training cohort. 
+```{r Mulivariate_all_features}
+varnames = sapply(1:length(names), function(i){
+  (paste0(names[i]))
+})
+
+iformula <- as.formula(sprintf("Surv(time, status) ~ %s ", paste(varnames, collapse='+')))  
+res.cox <- coxph(iformula, data = train)
+summary(res.cox)
+```
+
+Creating a signature using LASSO coefficients: 
+
+```{r creating_signature}
+train_set <- lapply(1:length(varnames), function(i) {
+  ifor <-  my_coefficients[i] 
+  k <- (sprintf("%s", varnames[i]))
+  feature_list <- train[,k]
+  value11 <- feature_list*ifor
+  df <- data.frame(value11)
+})
+
+
+store <- data.frame(train_set)
+QuRiS <- rowSums(store)
+```
+
+
+# Entire dataset
+
+## Multivariate Model
+Multivariate analysis with the signature and calculating CI with signature alone:
+
+```{r signature}
+train <- cbind(train, QuRiS)
+
+res.cox <- coxph(Surv(time, status) ~ QuRiS, data = train)
+summary(res.cox)
+res.cox[["coefficients"]]
+```
+
+Threshold was selected usign the MATLAB function in the repository. For example here, we used just the median value of the constructed QuRiS 
+```{r dividing_data_based_median}
+threshold <- median(train$QuRiS)
+train$group <- 'Group1'
+train$group[train$QuRiS >= threshold] <- 'Group2'
+threshold
+```
+
+## Kaplan_Meier Survival Curve
+Kaplan-Meier plot based on predicted high and low risk groups
+```{r KM plot for training}
+fit2 <- survfit(Surv(time, status) ~ group, data = train)
+
+ggsurvplot(
+   fit2,                     # survfit object with calculated statistics.
+   data = train,             # data used to fit survival curves.
+   size = 1.2,
+   palette = c("#FFCC33", "#0080FF"),
+   risk.table = TRUE,       # show risk table.
+   pval = TRUE,             # show p-value of log-rank test..
+   xlab = "Time in months" ,  # customize X axis label.
+   cumcensor = TRUE      # plot the number of censored subjects at time t
+ #  ncensor.plot.height = 0.25
+)
+
+```
+
+## Hazard Ratio
+```{r hazard ratio}
+variables <- c("group")
+formula <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univariate_analysis <- lapply(formula, function(x){coxph(x, data = train)})
+# Extract data 
+results <- lapply(univariate_analysis,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         beta<-signif(x$coef[1], digits=4);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", 
+                                       "p.value")
+                         return(res)
+                       })
+res <- t(as.data.frame(results, check.names = FALSE))
+as.data.frame(res)
+```
+
+```{r}
+write.csv(train, file = "dataset_train.csv")
+```
+
+# Surgery Alone group (therapy = 0)
+
+
+Taking only cases for which therapy is euqal to 0 (i.e. has not received any additional treatment)
+
+```{r surgery_group}
+surgery <- with(train, subset(train, !train$Cases %in% train$Cases[is.na(time) | therapy == 1]))
+```
+
+## Multivariate Model
+```{r multivariate_surgery}
+res.cox <- coxph(Surv(time, status) ~ QuRiS, data = surgery)
+summary(res.cox)
+res.cox[["coefficients"]]
+```
+
+## Kaplan-Meier Curve
+Kaplan-Meier plot based on predicted high and low risk groups
+```{r KM plot for surgery}
+fit2 <- survfit(Surv(time, status) ~ group, data = surgery)
+
+ggsurvplot(
+   fit2,                     # survfit object with calculated statistics.
+   data = surgery,             # data used to fit survival curves.
+   size = 1.2,
+   palette = c("#FFCC33", "#0080FF"),
+   risk.table = TRUE,       # show risk table.
+   pval = TRUE,             # show p-value of log-rank test..
+   xlab = "Time in months" ,  # customize X axis label.
+   cumcensor = TRUE      # plot the number of censored subjects at time t
+ #  ncensor.plot.height = 0.25
+)
+
+```
+
+## Hazard Ratio
+```{r hazard ratio surgery}
+variables <- c("group")
+formula <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univariate_analysis <- lapply(formula, function(x){coxph(x, data = surgery)})
+# Extract data 
+results <- lapply(univariate_analysis,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         beta<-signif(x$coef[1], digits=4);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", 
+                                       "p.value")
+                         return(res)
+                       })
+res <- t(as.data.frame(results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+# Adjuvant-Chemotherapy Group (therapy = 1)
+
+Taking only cases for whcih therapy is euqal to 1 (i.e. They received any additional treatment)
+
+```{r adj_chemo_group}
+adj_chemo <- with(train, subset(train, !train$Cases %in% train$Cases[is.na(time) | therapy == 0]))
+```
+
+## Multivariate Model
+```{r train_signature}
+res.cox <- coxph(Surv(time, status) ~ QuRiS, data = adj_chemo)
+summary(res.cox)
+res.cox[["coefficients"]]
+```
+
+## Kaplan-Meier Curve
+Kaplan-Meier plot based on predicted high and low risk groups
+```{r KM plot for adj_chemo}
+fit2 <- survfit(Surv(time, status) ~ group, data = adj_chemo)
+
+ggsurvplot(
+   fit2,                     # survfit object with calculated statistics.
+   data = adj_chemo,             # data used to fit survival curves.
+   size = 1.2,
+   palette = c("#FFCC33", "#0080FF"),
+   risk.table = TRUE,       # show risk table.
+   pval = TRUE,             # show p-value of log-rank test..
+   xlab = "Time in months" ,  # customize X axis label.
+   cumcensor = TRUE      # plot the number of censored subjects at time t
+ #  ncensor.plot.height = 0.25
+)
+
+```
+
+## Hazard Ratio
+
+```{r hazard_ratio_adj.chemo}
+variables <- c("group")
+formula <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univariate_analysis <- lapply(formula, function(x){coxph(x, data = surgery)})
+# Extract data 
+results <- lapply(univariate_analysis,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         beta<-signif(x$coef[1], digits=4);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 2)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", 
+                                       "p.value")
+                         return(res)
+                       })
+res <- t(as.data.frame(results, check.names = FALSE))
+as.data.frame(res)
+```
+

@@ -1,0 +1,588 @@
+---
+title: "Predictive Signature"
+author: "Pranjal"
+date: "2/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Initial Setup and Package Loads in R 
+
+Packages used for the analysis.
+```{r initial_setup, cache=FALSE, message = FALSE, warning = FALSE}
+library(glmnet);library(survival);library(survminer);library(readxl);library(ggplot2); library(GGally)
+library(knitr); library(rmdformats); library(magrittr)
+library(skimr); library(Hmisc); library(Epi); library(vcd)
+library(tidyverse) 
+
+source("Love-boost.R")
+
+## Global options
+
+options(max.print="75")
+opts_chunk$set(comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+
+
+skimr::skim_with(numeric = list(hist = NULL),
+                 integer = list(hist = NULL))
+```
+
+## Loading the Raw Data into R 
+
+Loading raw dataset into R.
+
+Training Data from CCF with minimum and max. survival time.
+```{r}
+train <- read.csv("dataset_train.csv")
+
+train %>%
+  select(time) %>%
+  summary()
+```
+
+
+```{r}
+#train2 <- with(train, subset(train, !train$Cases %in% train$Cases[is.na(time) | therapy == 1]))
+```
+```{r}
+#df_sorted_names_asc <- train[with(train, order(RRS)), ]
+```
+
+
+```{r}
+#threshold_analysis <- lapply(i<- 20:240, function(i) {
+ # threshold <- df_sorted_names_asc$RRS[i]
+  #train$group <- ifelse(train$RRS >= threshold,1,2)
+#  subset1 <- subset(train, group == 1)
+#  res.cox <- coxph(Surv(time, status) ~ therapy, data = subset1)
+#  HR1 <- exp(res.cox$coefficients)
+  
+  
+ # groupss2 <- subset(train, group == 2)
+  
+  #for (k in 4:length(groupss2-8)) {
+   # threshold2 <- groupss2$RRS[k]
+    #groupss2$new <- ifelse(groupss2$RRS > threshold2, 1,2)
+  #  subset2 <- subset(groupss2, new == 2)
+  #  res.cox2 <- coxph(Surv(time, status) ~ therapy, data = subset2)
+   # HR2 <- exp(res.cox2$coefficients)
+  #}
+#})
+
+#res <- t(as.data.frame(threshold_analysis, check.names = FALSE))
+#as.data.frame(res)
+#y_min <- min(res[,"therapy"])
+```
+
+
+```{r}
+#threshold_analysis <- lapply(i<- 15:320, function(i) {
+ #  threshold <- df_sorted_names_asc$RRS[i]
+ #  train$group <- ifelse(train$RRS >= threshold,1,2)
+ #  subset1 <- subset(train, group == 1)
+ #  data.survdiff <- survdiff(Surv(time, status) ~ therapy, data= subset1)
+ #  p.val = 1 - pchisq(data.survdiff$chisq, length(data.survdiff$n) - 1)
+ #  HR = (data.survdiff$obs[2]/data.survdiff$exp[2])/(data.survdiff$obs[1]/data.survdiff$exp[1])
+ #  tbl = table(train$time,train$therapy)
+ #  y <- chisq.test(tbl)
+ #  chisq <- y[["statistic"]][["X-squared"]]
+ #  subset2 <- subset(train, group == 2)
+ #  data.survdiff1 <- survdiff(Surv(time, status) ~ therapy, data= subset2)
+ #  p.val2 = 1 - pchisq(data.survdiff$chisq, length(data.survdiff$n) - 1)
+ #  HR2= (data.survdiff$obs[2]/data.survdiff$exp[2])/(data.survdiff$obs[1]/data.survdiff$exp[1])
+ #  tbl = table(train$time,train$therapy)
+ #  y2 <- chisq.test(tbl)
+  # chisq2 <- y[["statistic"]][["X-squared"]]
+   
+   #res <- c(HR, p.val,chisq, threshold)
+   
+#   res <- c(HR, p.val,chisq, threshold)
+#   return(res)
+
+#})
+
+#res2 <- t(as.data.frame(threshold_analysis, check.names = FALSE))
+#as.data.frame(res2)
+#y_min <- min(res[,"therapy"])
+```
+
+
+
+```{r}
+
+threshold1 <- -0.09316364
+#threshold1 <- 0.0280
+
+threshold1
+#threshold2 <- 0.0987032923
+#threshold2 <- 0.1324831611
+threshold2 <- 0.0987032923
+```
+
+```{r}
+train$group <- 'Group3'
+train$group[train$QuRiS < threshold2 & train$QuRiS >= threshold1] <- 'Group2'
+train$group[train$QuRiS  < threshold1] <- 'Group1'
+
+```
+
+
+```{r}
+subset1 <- subset(train, group == "Group1")
+dim(subset1)
+aggregate(subset1[,], list(subset1$therapy), mean)$time
+```
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset1)
+summary(res.cox)
+```
+
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset1)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+
+```{r}
+subset2 <- subset(train, group == "Group2")
+dim(subset2)
+aggregate(subset2[,], list(subset2$therapy), mean)$time
+```
+
+
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset2)
+summary(res.cox)
+```
+
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset2)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+```{r}
+subset31 <- subset(train, group == "Group3")
+dim(subset31)
+aggregate(subset31[,], list(subset31$therapy), mean)$time
+```
+
+```{r}
+subset3 <- with(subset31, subset(subset31, !subset31$Cases %in% subset31$Cases[is.na(time)]))
+```
+
+
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset3)
+summary(res.cox)
+```
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset3)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+```{r}
+fit2 <- survfit(Surv(time, status) ~ therapy, data = subset3)
+
+ggsurvplot(
+   fit2,                     # survfit object with calculated statistics.
+   data = subset3,             # data used to fit survival curves.
+   size = 1.2,
+ #  palette = "jco", 
+   palette = c("#0080FF","#FFCC33"),
+   risk.table = TRUE,       # show risk table.
+   pval = TRUE,             # show p-value of log-rank test..
+   xlab = "Time in months"   # customize X axis label.
+)
+```
+
+```{r}
+data.survdiff <- survdiff(Surv(time, status) ~ therapy, data= subset3)
+
+p.val = 1 - pchisq(data.survdiff$chisq, length(data.survdiff$n) - 1)
+HR = (data.survdiff$obs[2]/data.survdiff$exp[2])/(data.survdiff$obs[1]/data.survdiff$exp[1])
+up95 = exp(log(HR) + qnorm(0.975)*sqrt(1/data.survdiff$exp[2]+1/data.survdiff$exp[1]))
+low95 = exp(log(HR) - qnorm(0.975)*sqrt(1/data.survdiff$exp[2]+1/data.survdiff$exp[1]))
+
+data.survdiff
+HR
+up95
+low95
+p.val
+```
+
+# TCGA DATASET
+```{r train_set}
+TCGA1 <- read.csv("dataset_nsclc1.csv")
+UPeNN1 <- read.csv("dataset_upenn1.csv")
+
+TCGA <- rbind(TCGA1, UPeNN1)
+#train <- na.omit(train1)
+TCGA %>%
+  select(time) %>%
+  summary()
+```
+
+
+```{r}
+TCGA$group <- 'Group1'
+TCGA$group[TCGA$RRS < threshold2 & TCGA$RRS >= threshold1] <- 'Group2'
+TCGA$group[TCGA$RRS  >= threshold2] <- 'Group3'
+
+```
+
+
+```{r}
+subset1 <- subset(TCGA, group == "Group1")
+dim(subset1)
+aggregate(subset1[,], list(subset1$therapy), mean)$time
+```
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset1)
+summary(res.cox)
+```
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset1)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+```{r}
+subset2 <- subset(TCGA, group == "Group2")
+dim(subset2)
+aggregate(subset2[,], list(subset2$therapy), mean)$time
+```
+
+
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset2)
+summary(res.cox)
+```
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset2)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+```{r}
+subset31 <- subset(TCGA, group == "Group3")
+subset3 <- with(subset31, subset(subset31, !subset31$Cases %in% subset31$Cases[is.na(time)]))
+dim(subset3)
+aggregate(subset3[,], list(subset3$therapy), mean)$time
+```
+
+```{r}
+res.cox <- coxph(Surv(time, status) ~ therapy, data = subset3)
+summary(res.cox)
+```
+
+```{r}
+variables <- c("therapy")
+univ_formulas <- sapply(variables,
+                        function(x) as.formula(paste('Surv(time, status)~', x)))
+
+univ_models <- lapply(univ_formulas, function(x){coxph(x, data = subset3)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         p.value<-signif(x$wald["pvalue"], digits=4)
+                         wald.test<-signif(x$wald["test"], digits=4)
+                         beta<-signif(x$coef[1], digits=2);#coeficient beta
+                         HR <-signif(x$coef[2], digits=4);#exp(beta)
+                         HR.confint.lower <- signif(x$conf.int[,"lower .95"], 4)
+                         HR.confint.upper <- signif(x$conf.int[,"upper .95"],4)
+                         HR <- paste0(HR, " (", 
+                                      HR.confint.lower, "-", HR.confint.upper, ")")
+                         res<-c(beta, HR, wald.test, p.value)
+                         names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                       "p.value")
+                         return(res)
+                         #return(exp(cbind(coef(x),confint(x))))
+                       })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+as.data.frame(res)
+```
+
+
+```{r}
+fit2 <- survfit(Surv(time, status) ~ therapy, data = subset3)
+
+ggsurvplot(
+   fit2,                     # survfit object with calculated statistics.
+   data = subset3,             # data used to fit survival curves.
+   size = 1.2,
+   palette = c("#0080FF","#FFCC33"),
+   risk.table = TRUE,       # show risk table.
+   pval = TRUE,             # show p-value of log-rank test..
+   xlab = "Time in months"   # customize X axis label.
+)
+```
+```{r}
+data.survdiff <- survdiff(Surv(time, status) ~ therapy, data= subset3)
+
+p.val = 1 - pchisq(data.survdiff$chisq, length(data.survdiff$n) - 1)
+HR = (data.survdiff$obs[2]/data.survdiff$exp[2])/(data.survdiff$obs[1]/data.survdiff$exp[1])
+up95 = exp(log(HR) + qnorm(0.975)*sqrt(1/data.survdiff$exp[2]+1/data.survdiff$exp[1]))
+low95 = exp(log(HR) - qnorm(0.975)*sqrt(1/data.survdiff$exp[2]+1/data.survdiff$exp[1]))
+
+data.survdiff
+HR
+up95
+low95
+p.val
+```
+
+
+```{r}
+setEPS()
+postscript("QuRiS_ForestPlot_validation.eps")
+library(forestplot)
+# Cochrane data from the 'rmeta'-package
+cochrane_from_rmeta <- 
+  structure(list(
+    mean  = c(NA, NA, 0.07, 2.13, 2.24),
+    lower = c(NA, NA, 0.01, 0.99, 0.95),
+    upper = c(NA, NA, 0.41, 4.54, 5.30)),
+    .Names = c("mean", "lower", "upper"), 
+    row.names = c(NA, -11L), 
+    class = "data.frame")
+
+tabletext<-cbind(
+  c("", "QuRiS","QH","QI", "QL"),
+  c("Treatment", "Chemo", "33.55", "24.15", "32.61"),
+  c("Treatment","Non-Chemo","10.86", "37.04", "34.08"),
+  c("", "P Value", "<0.001", "0.05","0.06"))
+
+forestplot(tabletext,
+                   cochrane_from_rmeta$mean,
+                   cochrane_from_rmeta$lower,
+                   cochrane_from_rmeta$upper,new_page = TRUE,
+           txt_gp = fpTxtGp(label = gpar(fontfamily = "Arial"), cex = 0.8),
+           hrzl_lines = gpar(col="#444444"),
+           graph.pos = 3,
+          colgap=unit(c(2),"mm"),
+          lineheight = unit(c(15),"mm"),
+      #     cochrane_from_rmeta,new_page = TRUE,
+           is.summary=c(TRUE,TRUE,rep(FALSE,4)),
+           align = c("c", "c", "c", "c"),
+           clip=c(0.05,2.5), 
+           xlog=TRUE,
+         #xticks = c(0.1,1,1.1,1.2,1.3,1.4) ,
+           col=fpColors(box="blue",line="darkblue", hrz_lines = "#444444"),
+           vertices=FALSE,
+          fn.ci_norm=c("fpDrawDiamondCI"),
+                 boxsize=0.2,
+           cex.axis=8,
+          xlab="Hazard Ratios")
+
+x <- unit(0.5, 'npc'); y <- unit(.96, 'npc')
+grid.text('D2+D3:Disease Free Survival', x, y, gp = gpar(fontsize=15, font=2))
+
+# Fix manually the position of the HR numbers
+#xhr <- unit(0.68, 'npc'); yhr <- unit(0.65, 'npc')
+#grid.text('0.09', xhr, yhr, gp = gpar(fontsize=10, font=1))
+
+#xh2r <- unit(0.75, 'npc'); yh2r <- unit(0.52, 'npc')
+#grid.text('0.19', xh2r, yh2r, gp = #gpar(fontsize=10, font=1))
+
+#xl2r <- unit(0.80, 'npc'); yl2r <- unit(0.38, 'npc')
+#grid.text('0.57', xl2r, yl2r, gp = gpar(fontsize=10, font=1))
+
+#xlr <- unit(0.82, 'npc'); ylr <- unit(0.25, 'npc')
+#grid.text('1.9', xlr, ylr, gp = gpar(fontsize=10, font=1))
+
+#xl2r <- unit(0.92, 'npc'); yl2r <- unit(0.25, 'npc')
+#grid.text('13', xl2r, yl2r, gp = gpar(fontsize=10, font=1))
+dev.off()
+```
+```{r}
+setEPS()
+postscript("QuRiS_ForestPlot_training.eps")
+library(forestplot)
+# Cochrane data from the 'rmeta'-package
+cochrane_from_rmeta <- 
+  structure(list(
+    mean  = c(NA, NA, 0.27, 1.32, 2.15),
+    lower = c(NA, NA, 0.07, 0.73, 1.13),
+    upper = c(NA, NA, 0.95, 2.38, 4.08)),
+    .Names = c("mean", "lower", "upper"), 
+    row.names = c(NA, -11L), 
+    class = "data.frame")
+
+tabletext<-cbind(
+  c("", "QuRiS","QH","QI", "QL"),
+  c("Treatment", "Chemo", "46.19", "34.32", "40.03"),
+  c("Treatment","Non-Chemo","39.78", "37.07", "44.26"),
+  c("", "P Value", "0.03", "0.4","0.03"))
+
+forestplot(tabletext,
+                   cochrane_from_rmeta$mean,
+                   cochrane_from_rmeta$lower,
+                   cochrane_from_rmeta$upper,new_page = TRUE,
+           txt_gp = fpTxtGp(label = gpar(fontfamily = "Arial"), cex = 0.8),
+           hrzl_lines = gpar(col="#444444"),
+           graph.pos = 3,
+          colgap=unit(c(2),"mm"),
+          lineheight = unit(c(15),"mm"),
+      #     cochrane_from_rmeta,new_page = TRUE,
+           is.summary=c(TRUE,TRUE,rep(FALSE,4)),
+           align = c("c", "c", "c", "c"),
+           clip=c(0.05,2.5), 
+           xlog=TRUE,
+         #xticks = c(0.1,1,1.1,1.2,1.3,1.4) ,
+           col=fpColors(box="blue",line="darkblue", hrz_lines = "#444444"),
+           vertices=FALSE,
+          fn.ci_norm=c("fpDrawDiamondCI"),
+                 boxsize=0.2,
+           cex.axis=8,
+          xlab="Hazard Ratios")
+
+x <- unit(0.5, 'npc'); y <- unit(.96, 'npc')
+grid.text('D1:Disease Free Survival', x, y, gp = gpar(fontsize=15, font=2))
+
+# Fix manually the position of the HR numbers
+#xhr <- unit(0.68, 'npc'); yhr <- unit(0.65, 'npc')
+#grid.text('0.09', xhr, yhr, gp = gpar(fontsize=10, font=1))
+
+#xh2r <- unit(0.75, 'npc'); yh2r <- unit(0.52, 'npc')
+#grid.text('0.19', xh2r, yh2r, gp = #gpar(fontsize=10, font=1))
+
+#xl2r <- unit(0.80, 'npc'); yl2r <- unit(0.38, 'npc')
+#grid.text('0.57', xl2r, yl2r, gp = gpar(fontsize=10, font=1))
+
+#xlr <- unit(0.82, 'npc'); ylr <- unit(0.25, 'npc')
+#grid.text('1.9', xlr, ylr, gp = gpar(fontsize=10, font=1))
+
+#xl2r <- unit(0.92, 'npc'); yl2r <- unit(0.25, 'npc')
+#grid.text('13', xl2r, yl2r, gp = gpar(fontsize=10, font=1))
+dev.off()
+```
+
